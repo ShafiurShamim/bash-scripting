@@ -1,0 +1,152 @@
+#!/bin/bash
+
+
+
+# https://www.gnu.org/software/bash/manual/bashref.html#Exit-Status
+# Exit code 0        Succeeded , A non-zero exit status indicates failure.
+# Exit code 1        General errors, Miscellaneous errors, such as "divide by zero" and other impermissible operations
+# Exit code 2        All builtins return an exit status of 2 to indicate icol_resetorrect usage, generally invalid options or missing arguments.
+# If a command is not found, the child process created to execute it returns a status of 127.
+# If a command is found but is not executable, the return status is 126.
+
+
+redfg="\e[31m";     redbg="\e[41m"
+greenfg="\e[32m";   greenbg="\e[42m"
+
+col_reset="\e[0m"
+
+## Set parameters
+action=$1
+domain=$2
+rootDir=$3
+
+# permissions
+if [ "$(whoami)" != "root" ]; then
+    echo -e "\n ${redbg} Root privileges are required to run this, try running with sudo... ${col_reset} \n"
+    exit 1
+fi
+
+
+sitesAvaiable='/etc/apache2/sites-available/'
+sitesEnabled='/etc/apache2/sites-enabled/'
+sitesAvaiableDomain=$sitesAvaiable$domain.conf
+
+
+if [ "$action" == "" ] && [ "$domain" == "" ] && [ "$rootDir" == "" ]; then
+    echo -e "\n ${redbg} Three parameters required $action ${col_reset} \n"
+    echo -e "e.g. create domain /var/www \n"
+    exit 2;
+fi
+
+if [ "$action" != 'create' ] && [ "$action" != 'delete' ]; then
+    echo -e "\n ${redbg} wrong parameter $action ${col_reset} \n"
+    exit 2;
+fi
+
+
+# read -p 'Domain Name: ' domain_name
+
+if [ "$action" == 'create' ]
+    then
+        if [ -e $sitesAvaiableDomain ]; then
+            echo -e $"This domain already exists.\n"
+            exit 2;
+        fi
+		# make web directory if not found
+        if [ ! -d "$rootDir" ]; then
+
+            mkdir $rootDir
+			# change file mode to rwxr-xr-x
+            chmod 755 $rootDir
+
+            read -p 'type owner: ( e.g. user:www-data ): ' owner
+
+			# change file owner and group
+            if [ "$owner" == "" ]; then
+                chown -R "$apacheUser:$apacheUser" $rootDir
+            else
+                chown -R "$owner" $rootDir
+            fi
+        fi
+
+    if ! echo "
+		<VirtualHost *:80>
+			ServerAdmin "webmaster@localhost"
+			ServerName $domain
+			ServerAlias $domain
+			DocumentRoot $rootDir
+			<Directory />
+				AllowOverride All
+			</Directory>
+			<Directory $rootDir>
+				Options Indexes FollowSymLinks MultiViews
+				AllowOverride all
+				Require all granted
+			</Directory>
+			ErrorLog /var/log/apache2/$domain-error.log
+			LogLevel error
+			CustomLog /var/log/apache2/$domain-access.log combined
+		</VirtualHost>" > $sitesAvaiableDomain
+		then
+			echo -e $"There is an ERROR creating $domain file"
+			exit 1;
+		else
+			echo -e $"\nNew Virtual Host Created\n"
+		fi
+
+		### Add domain in /etc/hosts
+		if ! echo "127.0.0.1	$domain" >> /etc/hosts
+		then
+			echo $"ERROR: Not able to write in /etc/hosts"
+			exit 1;
+		else
+			echo -e $"\nHost added to /etc/hosts file \n"
+		fi
+
+        # enable website
+		a2ensite $domain
+
+		# restart Apache
+		systemctl reload apache2
+        
+		# Completion message
+		echo -e $"Complete! \n\nNew host is: http://$domain \nLocated at: $rootDir"
+		exit;
+
+fi
+
+
+if [ "$action" == 'delete' ]; then
+
+	if [ -d "$rootDir" ]; then
+		read -p 'Delete host root directory? (Y/n): ' delRootDir
+		 
+
+		if [ "$delRootDir" == 'y' -o "$delRootDir" == 'Y' ]; then
+			rm -rf $rootDir
+			echo -e $"Directory deleted"
+		else
+			echo -e $"Host directory preserved"
+		fi
+
+	else 
+		echo -e "\n${redfg}ERROR: Host directory not found!${col_reset}\n"
+	fi
+
+    sed -i "/$domain/d" /etc/hosts
+
+    a2dissite $domain
+
+    # restart Apache
+	systemctl reload apache2
+
+    if [ -e $sitesAvaiableDomain ]; then
+       rm $sitesAvaiableDomain
+       echo -e $"\nVirtual Host Removed\n"
+    fi
+    exit;
+fi
+
+# if [ ! -f  ]; then
+#     echo "file not found!"
+# fi
